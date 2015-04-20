@@ -1,6 +1,6 @@
 import logging
 
-from premo import Model, ModelError, Observer, StateMachine
+from premo import Model, ModelError, Observer, PhysicalModel, StateMachine
 import sume
 
 from . import Rules, clients, settings
@@ -9,38 +9,60 @@ from . import Rules, clients, settings
 logger = logging.getLogger(__name__)
 
 
-Model.engine = Model.engines.mysql.configure(settings.mysql)
+PhysicalModel.engine = PhysicalModel.engines.mysql.configure(settings.mysql)
+
+
+class OrderSchema(PhysicalModel):
+
+    timestamp = PhysicalModel.datetime()
+
+    annotation = PhysicalModel.unicode()
+
+    source = PhysicalModel.relation(PaymentInstrument)
+
+    destination = PhysicalModel.relation(PaymentInstrument)
+
+    state = PhysicalModel.enum(Order.states)
+
+    meta = PhysicalModel.dict()
+
+
+class ItemSchema(PhysicalModel):
+
+    order = PhysicalModel.relation(Order)
+
+    timestamp = PhysicalModel.datetime()
+
+    annotation = PhysicalModel.unicode()
+
+    state = PhysicalModel.enum(Item.states)
+
+    url = PhysicalModel.url()
+
+    quantity = PhysicalModel.integer()
+
+    unit_price = PhysicalModel.money()
+
+    tags = PhysicalModel.list()
+
+
+class PaymentSchema(sume.PaymentSchema):
+
+    order = PhysicalModel.relation(Order)
 
 
 class Order(Model):
 
-    timestamp = Model.datetime()
-
-    annotation = Model.unicode()
-
-    source = Model.relation(PaymentInstrument)
-
-    destination = Model.relation(PaymentInstrument)
-
-    items = Model.relation(Item).many()
+    __physical__ = OrderSchema
 
     payments = Model.relation(Payment).many()
 
+    items = Model.relation(Item).many()
+
     states = StateMachine('OPEN', 'CLOSED', 'INVALID')
-
-    state = Model.enum(states)
-
     states.on_transition(states.any, states.OPEN, 'order.opened')
     states.on_transition(states.OPEN, states.CLOSED, 'order.closed')
     states.on_transition(states.any, states.INVALID, 'order.invalidated')
-
-    meta = Model.dict()
-
-    CurrencyIssue = ModelError.bequeth()
-
-    CheckoutError = ModelError.bequeth()
-
-    NoPaymentSource = ModelError.bequeth()
 
     def checkout(self):
         if not self.source:
@@ -88,35 +110,24 @@ class Order(Model):
             raise self.CurrencyIssue()
         return sum(item.unit_price for item in self.items)
 
+    CurrencyIssue = ModelError.bequeth()
+
+    CheckoutError = ModelError.bequeth()
+
+    NoPaymentSource = ModelError.bequeth()
+
 
 class Item(Model):
 
-    order = Model.relation(Order)
-
-    timestamp = Model.datetime()
-
-    annotation = Model.unicode()
+    __physical__ = ItemSchema
 
     states = StateMachine('AVAILABLE', 'RESERVED', 'LOCKED')
-
-    state = Model.enum(states)
-
-    url = Model.url()
-
-    quantity = Model.integer()
-
-    unit_price = Model.money()
-
-    tags = Model.list()
 
     states.on_transition(states.AVAILABLE, states.RESERVED, 'item.reserved')
     states.on_transition(states.RESERVED, states.LOCKED, 'item.locked')
     states.on_transition(states.LOCKED, states.AVAILABLE, 'item.freed')
     states.on_transition(states.RESERVED, states.AVAILABLE, 'item.freed')
 
-    InventoryNotFound = ModelError.bequeth()
-
-    InventoryNotAvailable = ModelError.bequeth()
 
     def reserve(self, *args, **kwargs):
         try:
@@ -144,23 +155,27 @@ class Item(Model):
         self.unit_price = inventory.unit_price
         return self
 
+    InventoryNotFound = ModelError.bequeth()
 
-class PaymentInstrument(sume.Instrument):
-
-    def debit(self, value, order=None):
-        payment = Payment.stage(value=value, order=order)
-        return payment.submit()
+    InventoryNotAvailable = ModelError.bequeth()
 
 
 class Payment(sume.Payment):
 
-    order = Model.relation(Order)
+    __physical__ = PaymentSchema
 
     states = sume.Payment.states
 
     states.on_transition(states.any, states.SUCCEEDED, 'payment.succeeded')
     states.on_transition(states.any, states.FAILED, 'payment.failed')
     states.on_transition(states.any, states.PENDING, 'payment.pending')
+
+
+class PaymentInstrument(sume.Instrument):
+
+    def debit(self, value, order=None):
+        payment = Payment.stage(value=value, order=order)
+        return payment.submit()
 
 
 class ModelObserver(Observer):
