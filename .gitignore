@@ -1,0 +1,24 @@
+*.py[co]
+
+# editor
+*.iml
+
+# packages
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+var
+sdist
+develop-eggs
+.installed.cfg
+
+# installer logs
+pip-log.txt
+
+# unit test / coverage reports
+.coverage
+.tox
+
